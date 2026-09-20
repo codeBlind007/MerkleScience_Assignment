@@ -2,9 +2,8 @@
 from typing import Optional
 
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import select, or_, func
 from sqlalchemy.orm import Session
-
 from app.models import Book
 from app.schemas import BookCreate, BookPage, BookSort, BookUpdate
 
@@ -16,6 +15,11 @@ def create_book(db: Session, data: BookCreate) -> Book:
     """
     # TODO: reject a duplicate ISBN with 409
     book = Book(**data.model_dump())
+    existing_book = db.scalar(select(Book).where(Book.isbn == book.isbn))
+
+    if existing_book:
+        raise HTTPException(status_code=409, detail="Book with this ISBN already exist")
+
     db.add(book)
     db.commit()
     db.refresh(book)
@@ -56,13 +60,43 @@ def list_books(
     """
     query = select(Book)
     if q:
-        query = query.where(Book.title.icontains(q, autoescape=True))
+        query = query.where(or_(
+            Book.title.icontains(q, autoescape=True),
+            Book.author.icontains(q, autoescape=True)
+        ))
     if restricted is not None:
         query = query.where(Book.restricted == restricted)
     # TODO: min_price / max_price filters
 
-    # TODO: apply ``sort``
-    books = db.scalars(query.order_by(Book.id.asc()).limit(limit).offset(offset)).all()
-    total = len(books)
+    if min_price is not None: 
+        query = query.where(Book.price_cents >= min_price)
 
-    return BookPage(items=books, total=total, limit=limit, offset=offset)
+    if max_price is not None:
+        query = query.where(Book.price_cents <= max_price)
+
+    # TODO: apply ``sort``
+    if sort == 'title':
+        query = query.order_by(Book.title.asc(), Book.id.asc())
+    elif sort == '-title':
+        query = query.order_by(Book.title.desc(), Book.id.asc())
+    elif sort == 'price':
+        query = query.order_by(Book.price_cents.asc(), Book.id.asc())
+    elif sort == '-price':
+        query = query.order_by(Book.price_cents.desc(), Book.id.asc())
+    else:
+        query = query.order_by(Book.id.asc())
+    
+    total = db.scalar(
+        select(func.count()).select_from(query.order_by(None).subquery())
+    )
+
+    books = db.scalars(
+        query.limit(limit).offset(offset)
+    ).all()
+
+    return BookPage(
+        items=books,
+        total=total,
+        limit=limit,
+        offset=offset
+    )
