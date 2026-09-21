@@ -36,7 +36,25 @@ def get_book(db: Session, book_id: int) -> Book:
 
 def update_book(db: Session, book_id: int, data: BookUpdate) -> Book:
     """Apply a partial update. Only fields present in the request are changed; 404 if missing."""
-    raise NotImplementedError("update_book")
+    book = db.get(Book, book_id)
+    if book is None:
+        raise HTTPException(status_code = 404, detail="Book not found")
+
+    if data.title is not None:
+        book.title = data.title
+    if data.author is not None:
+        book.author = data.author
+    if data.price_cents is not None:
+        book.price_cents = data.price_cents
+    if data.stock is not None:
+        book.stock = data.stock
+    if data.restricted is not None:
+        book.restricted = data.restricted
+
+    db.commit()
+    db.refresh(book)
+
+    return book
 
 
 def list_books(
