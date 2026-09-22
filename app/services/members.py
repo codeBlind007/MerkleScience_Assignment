@@ -3,10 +3,10 @@ from datetime import datetime
 from typing import List
 
 from fastapi import HTTPException
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_, case, func, select
 from sqlalchemy.orm import Session
 
-from app.models import Member, MemberTier, Order
+from app.models import Member, MemberTier, Order, Loan, OrderStatus
 from app.schemas import MemberCreate, MemberStats
 
 # Tiers from lowest to highest; a member's rank is their index in this list.
@@ -79,19 +79,64 @@ def get_member_stats(db: Session, member_id: int, now: datetime) -> MemberStats:
 
     get_member(db, member_id);
 
-    # select orders.id, orders.total_cents from orders inner join members on orders.member_id = members.id 
-    # where  orders.status is "paid"
-
     orders_paid, total_spent_cents = db.execute(
     select(
         func.count(Order.id),
         func.coalesce(func.sum(Order.total_cents), 0)
     ).where(
-        Order.status == "paid",
-        Order.member_id == member_id
+        Order.member_id == member_id,
+        Order.status == OrderStatus.PAID
     )
     ).one()
 
+    active_loans, overdue_loans, late_fees_cents = db.execute(
+        select(
+            func.coalesce(
+                func.sum(
+                    case(
+                        (Loan.returned_at.is_(None), 1),
+                        else_=0
+                    )
+                ),
+                0
+            ),
+            func.coalesce(
+                func.sum(
+                    case(
+                        (
+                            (Loan.returned_at.is_(None)) & (Loan.due_at < now),
+                            1
+                        ),
+                        else_=0
+                    )
+                ),
+                0
+            ),
+            func.coalesce(
+                func.sum(
+                    case(
+                        (
+                            Loan.returned_at.is_not(None),
+                            Loan.late_fee_cents
+                        ),
+                        else_=0
+                    )
+                ),
+                0
+            )
+        ).where(
+            Loan.member_id == member_id
+        )
+    ).one()
+
+    return MemberStats(
+        member_id=member_id,
+        orders_paid=orders_paid,
+        total_spent_cents=total_spent_cents,
+        active_loans=active_loans,
+        overdue_loans=overdue_loans,
+        late_fees_cents=late_fees_cents,
+    )
     
     
     
