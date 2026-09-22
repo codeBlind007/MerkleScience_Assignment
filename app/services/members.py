@@ -3,7 +3,7 @@ from datetime import datetime
 from typing import List
 
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import and_, func, select
 from sqlalchemy.orm import Session
 
 from app.models import Member, MemberTier, Order
@@ -40,6 +40,11 @@ def create_member(db: Session, data: MemberCreate, now: datetime) -> Member:
     Rules: email (already stripped + lowercased) must be unique -> 409; created_at = now.
     """
     # TODO: reject an email that is already in use with 409
+    existing_member = db.scalar(select(Member).where(Member.email == data.email))
+
+    if existing_member:
+        raise HTTPException(status_code = 409, detail = "Email already in use")
+
     member = Member(name=data.name, email=data.email, tier=data.tier.value, created_at=now)
     db.add(member)
     db.commit()
@@ -58,7 +63,7 @@ def get_member(db: Session, member_id: int) -> Member:
 def list_member_orders(db: Session, member_id: int) -> List[Order]:
     """All orders of a member ordered by id ascending; 404 if the member is missing."""
     get_member(db, member_id)
-    return list(db.scalars(select(Order).where(Order.member_id == member_id).order_by(Order.id)))
+    return list(db.scalars(select(Order).where(Order.member_id == member_id).order_by(Order.id.asc())))
 
 
 def get_member_stats(db: Session, member_id: int, now: datetime) -> MemberStats:
@@ -71,4 +76,22 @@ def get_member_stats(db: Session, member_id: int, now: datetime) -> MemberStats:
     - overdue_loans counts unreturned loans with now > due_at.
     - late_fees_cents sums late fees of returned loans.
     """
-    raise NotImplementedError("get_member_stats")
+
+    get_member(db, member_id);
+
+    # select orders.id, orders.total_cents from orders inner join members on orders.member_id = members.id 
+    # where  orders.status is "paid"
+
+    orders_paid, total_spent_cents = db.execute(
+    select(
+        func.count(Order.id),
+        func.coalesce(func.sum(Order.total_cents), 0)
+    ).where(
+        Order.status == "paid",
+        Order.member_id == member_id
+    )
+    ).one()
+
+    
+    
+    

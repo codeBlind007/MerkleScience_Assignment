@@ -5,7 +5,7 @@ import enum
 from datetime import datetime
 from typing import List
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String
+from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base
@@ -25,6 +25,10 @@ class OrderStatus(str, enum.Enum):
     PAID = "paid"
     CANCELLED = "cancelled"
 
+class LoanStatus(str, enum.Enum):
+    ACTIVE = "active"
+    OVERDUE = "overdue"
+    RETURNED = "returned"
 
 class Book(Base):
     __tablename__ = "books"
@@ -99,6 +103,10 @@ class Loan(Base):
     #   - due_at: when the book must be back (borrowed_at + 14 days)
     #   - returned_at: nullable, set when the book is returned
     #   - late_fee_cents: charged on return, defaults to 0
+    due_at: Mapped[datetime] = mapped_column(DateTime)
+    returned_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    late_fee_cents: Mapped[int] = mapped_column(Integer, default = 0)
+    status: Mapped[LoanStatus] = mapped_column(Enum(LoanStatus), nullable=False, default=LoanStatus.ACTIVE)
 
     member: Mapped[Member] = relationship(back_populates="loans")
     book: Mapped[Book] = relationship()
