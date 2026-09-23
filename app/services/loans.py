@@ -1,5 +1,6 @@
 """Library loan operations: borrowing and returning books."""
 from datetime import datetime, timedelta
+from math import ceil
 from typing import Dict, List, Optional
 
 from fastapi import HTTPException
@@ -41,7 +42,14 @@ def to_loan_out(loan: Loan, now: datetime) -> LoanOut:
 
 def calculate_late_fee(due_at: datetime, returned_at: datetime, price_cents: int) -> int:
     """25 cents per started day late (any partial day counts), capped at the book's price; 0 if not late."""
-    raise NotImplementedError("calculate_late_fee")
+
+    if due_at >= returned_at: return 0
+
+    late_seconds = (returned_at - due_at).total_seconds()
+    late_days = ceil(late_seconds / (24 * 60 * 60))
+
+    return min(late_days * 25, price_cents)
+
 
 
 def create_loan(db: Session, data: LoanCreate, now: datetime) -> LoanOut:
@@ -128,7 +136,7 @@ def create_loan(db: Session, data: LoanCreate, now: datetime) -> LoanOut:
             detail="Member already has an unreturned loan for this book"
         )
 
-    if active_loan_count >= TIER_LOAN_LIMIT[member.tier]:
+    if TIER_LOAN_LIMIT[member.tier] is not None and active_loan_count >= TIER_LOAN_LIMIT[member.tier]:
         raise HTTPException(
             status_code=409,
             detail="Member has reached their loan limit"
@@ -164,12 +172,12 @@ def create_loan(db: Session, data: LoanCreate, now: datetime) -> LoanOut:
         raise
 
     
-
 def get_loan(db: Session, loan_id: int, now: datetime) -> LoanOut:
     """Return a loan by id, or raise 404."""
     loan = db.scalar(select(Loan).where(Loan.id == loan_id))
-    if loan: 
+    if loan is None: 
         raise HTTPException(status_code=404, detail='Loan not found')
+
 
     return loan
 
@@ -180,7 +188,25 @@ def return_loan(db: Session, loan_id: int, now: datetime) -> LoanOut:
     Rules: 404 if missing; 409 if already returned. Sets returned_at = now, restores one copy
     of stock and charges a late fee (see ``calculate_late_fee``).
     """
-    raise NotImplementedError("return_loan")
+    loan = get_loan(db, loan_id, now)
+    if loan.returned_at is not None:
+        raise HTTPException(status_code = 409, detail='Loan already returned')
+
+    book = db.scalar(select(Book).where(Book.id == loan.book_id))
+
+    try:
+        loan.returned_at = now
+        book.stock += 1
+        loan.late_fee_cents = calculate_late_fee(loan.due_at, now, book.price_cents)
+
+        db.commit()
+        db.refresh(loan)
+        db.refresh(book)
+
+        return loan
+    except Exception:
+        db.rollback()
+        raise
 
 
 def list_member_loans(

@@ -106,7 +106,6 @@ class Loan(Base):
     due_at: Mapped[datetime] = mapped_column(DateTime)
     returned_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     late_fee_cents: Mapped[int] = mapped_column(Integer, default = 0)
-    status: Mapped[LoanStatus] = mapped_column(Enum(LoanStatus), nullable=False, default=LoanStatus.ACTIVE)
 
     member: Mapped[Member] = relationship(back_populates="loans")
     book: Mapped[Book] = relationship()
