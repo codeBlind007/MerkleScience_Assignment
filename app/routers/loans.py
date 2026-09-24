@@ -18,7 +18,7 @@ def create_loan(data: LoanCreate, db: Session = Depends(get_db), now: datetime =
 
 @router.get("/{loan_id}", response_model=LoanOut)
 def get_loan(loan_id: int, db: Session = Depends(get_db), now: datetime = Depends(get_now)):
-    return service.get_loan(db, loan_id, now)
+    return service.get_loan_out(db, loan_id, now)
 
 
 @router.post("/{loan_id}/return", response_model=LoanOut)
