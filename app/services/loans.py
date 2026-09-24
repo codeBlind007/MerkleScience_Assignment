@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.models import Book, Loan, MemberTier, Member, Order
 from app.services.members import tier_at_least, RESTRICTED_MIN_TIER, get_member
+from app.services.books import get_book
 from app.schemas import LoanCreate, LoanOut, LoanStatus
 
 # Maximum concurrent unreturned loans per tier (None = unlimited).
@@ -82,13 +83,8 @@ def create_loan(db: Session, data: LoanCreate, now: datetime) -> LoanOut:
     late_fee_cents 0, and stock is decremented by one.
     """
 
-    member = db.scalar(select(Member).where(Member.id == data.member_id))
-    if member is None:
-        raise HTTPException(status_code=404, detail="Member not found")
-
-    book = db.scalar(select(Book).where(Book.id == data.book_id))
-    if book is None:
-        raise HTTPException(status_code=404, detail="Book not found")
+    member = get_member(db, data.member_id)
+    book = get_book(db, data.book_id)
 
     if book.restricted and not tier_at_least(
         member.tier,
@@ -206,7 +202,7 @@ def return_loan(db: Session, loan_id: int, now: datetime) -> LoanOut:
     if loan.returned_at is not None:
         raise HTTPException(status_code = 409, detail='Loan already returned')
 
-    book = db.scalar(select(Book).where(Book.id == loan.book_id))
+    book = get_book(db, loan.book_id)
 
     try:
         loan.returned_at = now

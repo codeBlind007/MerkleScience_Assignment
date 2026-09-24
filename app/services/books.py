@@ -36,9 +36,7 @@ def get_book(db: Session, book_id: int) -> Book:
 
 def update_book(db: Session, book_id: int, data: BookUpdate) -> Book:
     """Apply a partial update. Only fields present in the request are changed; 404 if missing."""
-    book = db.get(Book, book_id)
-    if book is None:
-        raise HTTPException(status_code = 404, detail="Book not found")
+    book = get_book(db, book_id)
 
     if data.title is not None:
         book.title = data.title
