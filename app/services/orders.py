@@ -6,8 +6,8 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import select, or_, func
 
-from app.services.members import tier_at_least, RESTRICTED_MIN_TIER
-
+from app.services.members import tier_at_least, RESTRICTED_MIN_TIER, get_member
+from app.services.books import get_book
 from app.models import Member, MemberTier, Order, OrderStatus, Book, OrderItem
 from app.schemas import OrderCreate
 
@@ -47,19 +47,15 @@ def create_order(db: Session, data: OrderCreate, now: datetime) -> Order:
     Then stock is decremented for every item and prices are snapshotted.
     Pricing: discount_cents = subtotal * percent // 100; total = subtotal - discount.
     """
-
     # TODO:
     # 1. Load the member (404) and every book (404).
-    member = db.scalar(select(Member).where(Member.id == data.member_id))
-    if member is None:
-        raise HTTPException(status_code=404, detail="Member not found")
-    
-    # 2. If any book is restricted, check the member's tier (403).
+    member = get_member(db, data.member_id)
     book_ids = [item.book_id for item in data.items]
-
     books = db.scalars(
         select(Book).where(Book.id.in_(book_ids))
     ).all()
+
+    # 2. If any book is restricted, check the member's tier (403).
 
     books_by_id = {book.id: book for book in books}
 
@@ -72,6 +68,9 @@ def create_order(db: Session, data: OrderCreate, now: datetime) -> Order:
                 detail=f"Book {item.book_id} not found"
             )
 
+    for item in data.items:
+        book = books_by_id[item.book_id]
+
         if book.restricted and not tier_at_least(
             member.tier,
             RESTRICTED_MIN_TIER
@@ -80,15 +79,16 @@ def create_order(db: Session, data: OrderCreate, now: datetime) -> Order:
                 status_code=403,
                 detail="Member is not allowed to order/borrow restricted books"
             )
+    # 3. Check stock for every item before changing anything (409).
+
+    for item in data.items:
+        book = books_by_id[item.book_id]
 
         if book.stock < item.quantity:
             raise HTTPException(
                 status_code=409,
                 detail=f"Insufficient stock for book {book.id}"
             )
-    # 3. Check stock for every item before changing anything (409).
-
-        #--> implemented in above point
 
     try:
         # 4. Decrement stock and build OrderItems with the current price as unit_price_cents.
@@ -165,9 +165,37 @@ def pay_order(db: Session, order_id: int) -> Order:
 def cancel_order(db: Session, order_id: int) -> Order:
     """Cancel a pending order and restore the reserved stock. 404 if missing; 409 if not pending."""
     order = get_order(db, order_id)
+
     if order.status != OrderStatus.PENDING.value:
-        raise HTTPException(status_code=409, detail=f"Cannot cancel an order that is {order.status}")
-    order.status = OrderStatus.CANCELLED.value
-    db.commit()
-    db.refresh(order)
-    return order
+        raise HTTPException(
+            status_code=409,
+            detail=f"Cannot cancel an order that is {order.status}"
+        )
+
+    order_items = db.scalars(
+        select(OrderItem).where(OrderItem.order_id == order_id)
+    ).all()
+
+    book_ids = [item.book_id for item in order_items]
+
+    books = db.scalars(
+        select(Book).where(Book.id.in_(book_ids))
+    ).all()
+
+    books_by_id = {book.id: book for book in books}
+
+    try:
+        for item in order_items:
+            book = books_by_id[item.book_id]
+            book.stock += item.quantity
+
+        order.status = OrderStatus.CANCELLED.value
+
+        db.commit()
+        db.refresh(order)
+
+        return order
+
+    except Exception:
+        db.rollback()
+        raise
