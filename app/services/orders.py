@@ -4,7 +4,7 @@ from typing import Dict
 
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
-from sqlalchemy import select, or_, func
+from sqlalchemy import select, or_, func, update
 
 from app.services.members import tier_at_least, RESTRICTED_MIN_TIER, get_member
 from app.services.books import get_book
@@ -100,7 +100,18 @@ def create_order(db: Session, data: OrderCreate, now: datetime) -> Order:
         for item in data.items:
             book = books_by_id[item.book_id]
             total_quantity += item.quantity
-            book.stock -= item.quantity
+            
+            # Optimistic locking check: Ensure stock hasn't changed since it was read
+            result = db.execute(
+                update(Book)
+                .where(Book.id == book.id, Book.stock >= item.quantity)
+                .values(stock=Book.stock - item.quantity)
+            )
+            if result.rowcount == 0:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Concurrent modification detected for book {book.id}. Please try again."
+                )
 
             order_item = OrderItem(
                 book_id=book.id,
