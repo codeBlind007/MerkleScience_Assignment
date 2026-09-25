@@ -34,6 +34,15 @@ def ensure_can_access_restricted(member: Member) -> None:
         )
 
 
+def get_all_members(db: Session, page: int, limit: int) -> List[Member]:
+    offset = (page-1) * limit
+    return db.scalars(
+        select(Member)
+        .order_by(Member.id)
+        .offset(offset)
+        .limit(limit)
+    ).all()
+
 def create_member(db: Session, data: MemberCreate, now: datetime) -> Member:
     """Register a member.
 
@@ -58,6 +67,7 @@ def get_member(db: Session, member_id: int) -> Member:
     if member is None:
         raise HTTPException(status_code=404, detail="Member not found")
     return member
+
 
 
 def list_member_orders(db: Session, member_id: int) -> List[Order]:
