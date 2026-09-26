@@ -2,11 +2,8 @@
 
 ## Live Application
 
-Live URL: ______________________________
+Live URL: https://merklescience-assignment.onrender.com/
 
-Deployment / usage notes:
-- URL will be added once the final deployment is available.
-- No special setup or credentials are required for the assignment beyond the normal API usage described by the project.
 
 ## What I Completed
 
@@ -190,6 +187,34 @@ The fix:
 
 I deliberately batch-fetched the books rather than calling `db.get(Book, ...)` inside the loop. This avoids an N+1 query pattern.
 
+### 11. Optional Extras
+
+- Implemented GET /members endpoint with pagination
+- Implemented Optimistic locking handling concurrent orders for last copy of a book safely
+   
+To safely handle concurrent orders and prevent the overselling problem (race conditions on limited stock items) without locking database rows upfront, we use **Atomic Conditional Updates**.
+
+#### Approach & Implementation
+1. **Validation Phase:** The application reads book records and performs all necessary business checks (existence, restrictions, and initial stock availability) in memory.
+2. **Atomic Inventory Decrement:** Instead of a naive optimistic check (which would fail if *any* change occurred to the stock), we execute a conditional database update checking a **range (`stock >= quantity`)**:
+
+   ```python
+   result = db.execute(
+       update(Book)
+       .where(Book.id == book.id, Book.stock >= item.quantity)
+       .values(stock=Book.stock - item.quantity)
+   ) 
+   ```
+
+Conflict Handling: If the stock drops below the requested amount concurrently before the write executes, the update statement affects 0 rows (rowcount == 0). The system then catches this, rolls back the transaction, and safely raises a 409 Conflict (Insufficient Stock) HTTP exception.
+
+Why This Design?
+
+    High Concurrency for Shared Stock: Multiple users can successfully purchase from the same stock pool simultaneously (e.g., if stock is 2 and two users want 1 each, both succeed sequentially) rather than failing unnecessarily due to strict version matching.
+
+    Guaranteed Safety: The database's internal row-level write serialization ensures that stock can never drop below zero, completely eliminating overselling.
+
+
 ## Architecture and Design Decisions
 
 ### Service-layer business logic
@@ -324,15 +349,20 @@ All provided TODOs were completed.
 
 All initially `NotImplemented` service-layer functions were implemented.
 
+All Optional Extra features.
+
 The complete test suite passes, including validation, edge cases, transaction-related behavior, reporting, and the required error precedence.
 
 No assignment TODOs were intentionally left unfinished.
 
 ## What I Did Not Implement
 
+
 No additional features outside the assignment requirements were added.
 
-I did not add a separate migration system because this project uses a local SQLite database for the assignment and the schema changes were handled during development by recreating the local database when necessary.
+I did not add a separate migration system such as Alembic. For local development, the project uses SQLite and schema changes were handled by recreating the local database during development when required. For production deployment, the application uses Supabase PostgreSQL, and the database schema is initialized from the SQLAlchemy models.
+
+For a larger production application, I would introduce a migration workflow using Alembic to version and safely apply incremental database schema changes across different environments.
 
 ## Spec Clarifications / Points I Noticed
 
@@ -350,9 +380,49 @@ For example, if an order contains one restricted existing book and one nonexiste
 
 ## Deployment
 
-Live URL: ______________________________
+Live URL: https://merklescience-assignment.onrender.com/
 
-Deployment platform / database details: ______________________________
+#### Deployment Platform / Database Details
+
+The backend application is deployed on **Render** as a FastAPI web service.
+
+The database is hosted on **Supabase PostgreSQL**.
+
+Deployment architecture:
+
+
+### Platform Choice
+
+I chose Render for hosting the backend because it provides a simple deployment workflow for Python web applications. It integrates directly with GitHub repositories, automatically builds and deploys new changes, and handles the web service infrastructure such as process management and HTTPS configuration.
+
+Since the application is built using FastAPI, Render's support for Python services and Uvicorn-based deployments makes it a suitable choice without requiring manual server configuration.
+
+### Database Choice
+
+I used Supabase PostgreSQL as the production database because the application has relational data models with multiple relationships:
+
+- Members and their orders.
+- Orders and order items.
+- Books and inventory tracking.
+- Loans and borrowing history.
+
+PostgreSQL provides strong relational constraints, indexing support, transactions, and reliable handling of concurrent updates, which are important for operations such as:
+
+- Reserving and restoring book stock.
+- Creating orders atomically.
+- Returning loans while updating inventory.
+- Maintaining consistency between related tables.
+
+The local development environment uses SQLite for simplicity, while production uses PostgreSQL through the `SANCTUM_DATABASE_URL` environment variable. This keeps local development lightweight while using a production-suitable database in deployment.
+
+### Deployment Configuration
+
+- Render installs dependencies using `uv` from `pyproject.toml` and `uv.lock`.
+- The FastAPI application runs using Uvicorn.
+- Database configuration is environment-based:
+  - Local: SQLite (`sanctum.db`)
+  - Production: Supabase PostgreSQL
+- Demo data is inserted using `seed.py` when the database is empty, allowing a fresh deployment to be initialized without manually creating records.
 
 ## AI Usage
 
